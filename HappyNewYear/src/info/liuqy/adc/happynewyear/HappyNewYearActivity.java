@@ -110,17 +110,6 @@ public class HappyNewYearActivity extends Activity {
 			// only process contacts with phone numbers
 			if (phoneCount > 0) {
 
-				Cursor nicknames = getContentResolver().query(
-						Data.CONTENT_URI,
-						new String[] { Data._ID, Nickname.NAME },
-						Data.CONTACT_ID + "=?" + " AND " + Data.MIMETYPE + "='"
-								+ Nickname.CONTENT_ITEM_TYPE + "'",
-						new String[] { contactId }, null);
-
-				// only process contacts with nickname (the first one)
-				if (nicknames.moveToFirst()) {
-					String nickname = nicknames.getString(nicknames  
-                            .getColumnIndex(Nickname.NAME));
 					
 					Cursor notes = getContentResolver().query(  
 	                        Data.CONTENT_URI,  
@@ -168,15 +157,28 @@ public class HappyNewYearActivity extends Activity {
 									.getColumnIndex(Phone.TYPE));
 							
 							if (isMobile(phoneNumber, phoneType)) {
+							    String nickname = null;
+							    Cursor nicknames = getContentResolver().query(
+				                        Data.CONTENT_URI,
+				                        new String[] { Data._ID, Nickname.NAME },
+				                        Data.CONTACT_ID + "=?" + " AND " + Data.MIMETYPE + "='"
+				                                + Nickname.CONTENT_ITEM_TYPE + "'",
+				                        new String[] { contactId }, null);
+
+				                // only process contacts with nickname (the first one)
+				                if (nicknames.moveToFirst()) {
+				                    nickname = nicknames.getString(nicknames  
+				                            .getColumnIndex(Nickname.NAME));
+				                }
+				                
+				                nicknames.close();
+							    
 								sendlist.putString(phoneNumber, nickname);
 							}
 						}
 						
 						phones.close();
 					}
-				}
-				
-				nicknames.close();
 			}
 		}
 		
