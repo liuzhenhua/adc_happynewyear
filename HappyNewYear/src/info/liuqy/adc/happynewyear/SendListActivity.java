@@ -19,8 +19,9 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.os.Bundle;
-import android.telephony.SmsManager;
 import android.view.View;
+import android.widget.ListView;
+import android.widget.RemoteViews;
 import android.widget.SimpleAdapter;
 import android.widget.Toast;
 
@@ -35,6 +36,9 @@ public class SendListActivity extends ListActivity {
     static final String EXTRA_TONUMBER = "sms_to_number";
     static final String EXTRA_SMS = "sms_content";
     
+    static final String SMS_INDEX_ACTION = "sms_index_action";
+    static final String INDEX_KEY = "index_key";
+    
     private static final int HAPPYNEWYEAR_ID = 1;
 
     private static final String DB_NAME = "data";
@@ -44,6 +48,14 @@ public class SendListActivity extends ListActivity {
     static final String FIELD_TO = "to_number";
     static final String FIELD_SMS = "sms";
     static final String KEY_ROWID = "_id";
+    static final String FIELD_SEND_STATE = "send_state";
+    
+    private static final String UNSEND = "UNSEND";
+//    private static final int SENDING = 0x2;
+//    private static final int HASSEND = 0x3;
+//    private static final int DEVLIVER = 0x4;
+//    private static final int UNDEVLIVER = 0x5;
+    private static final String SEDNSUCCESSED = "Send successed!";
     
     //[<TO, number>,<SMS, sms>]
     List<Map<String, String>> smslist = new LinkedList<Map<String, String>>();
@@ -51,15 +63,24 @@ public class SendListActivity extends ListActivity {
 
     static BroadcastReceiver smsSentReceiver = null;
 	static BroadcastReceiver smsDeliveredReceiver = null;
+	static BroadcastReceiver smsIndexReceiver = null;
     
     SQLiteOpenHelper dbHelper = null;
     SQLiteDatabase db = null;
-
+    
+    private int maxSms = 0;
+    private int deliveredSms = 0;
+    private int sendSms_count = 0;
+    
+    private boolean isSendingSms = false;
+    
+    ListView smsListView = null;
 	@Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.sendlist);
         
+        smsListView = getListView();
         initdb();
         createReceivers();
         
@@ -89,46 +110,35 @@ public class SendListActivity extends ListActivity {
                 Map<String, String> rec = new Hashtable<String, String>();
                 rec.put(KEY_TO, n);
                 rec.put(KEY_SMS, sms);
+                //¥Ê»Î ˝æ›ø‚
+                saveToDatabase(n, sms , UNSEND);
                 smslist.add(rec);
                 adapter.notifyDataSetChanged();
             }
+            maxSms = sendlist.size();
         }
 
 	}
 
 	public void sendSms(View v) {
-        SmsManager sender = SmsManager.getDefault();
-        if (sender == null) {
-            // TODO toast error msg
-        }
-
-        for (int idx = 0; idx < smslist.size(); idx++) {
-            Map<String, String> rec = smslist.get(idx);
-            String toNumber = rec.get(KEY_TO);
-            String sms = rec.get(KEY_SMS);
-
-            // SMS sent pending intent
-            Intent sentActionIntent = new Intent(SENT_ACTION);
-            sentActionIntent.putExtra(EXTRA_IDX, idx);
-            sentActionIntent.putExtra(EXTRA_TONUMBER, toNumber);
-            sentActionIntent.putExtra(EXTRA_SMS, sms);
-            PendingIntent sentPendingIntent = PendingIntent.getBroadcast(
-                    this, 0, sentActionIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT);
-
-            // SMS delivered pending intent
-            Intent deliveredActionIntent = new Intent(DELIVERED_ACTION);
-            deliveredActionIntent.putExtra(EXTRA_IDX, idx);
-            deliveredActionIntent.putExtra(EXTRA_TONUMBER, toNumber);
-            deliveredActionIntent.putExtra(EXTRA_SMS, sms);
-            PendingIntent deliveredPendingIntent = PendingIntent.getBroadcast(
-                    this, 0, deliveredActionIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT);
-
-            //send
-            sender.sendTextMessage(toNumber, null, sms, sentPendingIntent,
-                    deliveredPendingIntent);
-        }
+	    
+	    if(!isSendingSms)
+	    {
+	        String[] columns = {FIELD_TO}; 
+	        String selection = "send_state=?";        
+	        String[] selectionArgs={SEDNSUCCESSED};
+	        Cursor phoneNums = db.query(TBL_NAME,columns, selection,selectionArgs,null,null,null);
+	        
+	        while (phoneNums.moveToNext() && !phoneNums.isNull(0))
+	        {
+	              String phoneNum = phoneNums.getString(0);
+	              smslist.remove(phoneNum);
+	        }
+	        isSendingSms = true;
+	        Thread sendSmsThread = new Thread(new SendSMS(this,smslist));
+	        sendSmsThread.start();
+	    }
+        
     }
 
 	@Override
@@ -150,17 +160,26 @@ public class SendListActivity extends ListActivity {
 			smsSentReceiver = new BroadcastReceiver() {
 				@Override
 				public void onReceive(Context context, Intent intent) {
+				    sendSms_count ++;
+				    if(sendSms_count == maxSms)
+				    {
+				        isSendingSms = false;
+				    }
 					int idx = intent.getIntExtra(EXTRA_IDX, -1);
 					String toNum = intent.getStringExtra(EXTRA_TONUMBER);
 					String sms = intent.getStringExtra(EXTRA_SMS);
+					
 					int succ = getResultCode();
 					if (succ == Activity.RESULT_OK) {
+					    smsListView.getChildAt(idx).setBackgroundColor(getResources().getColor(R.color.yellow));
+					    adapter.notifyDataSetChanged();
 						// TODO better notification
 						Toast.makeText(SendListActivity.this,
 								"Sent to " + toNum + " OK!", Toast.LENGTH_SHORT)
 								.show();
 					} else {
-						// TODO
+					    smsListView.getChildAt(idx).setBackgroundColor(getResources().getColor(R.color.red));
+					    adapter.notifyDataSetChanged();
 					}
 				}
 			};
@@ -169,54 +188,89 @@ public class SendListActivity extends ListActivity {
 			smsDeliveredReceiver = new BroadcastReceiver() {
 				@Override
 				public void onReceive(Context context, Intent intent) {
+				    
 					int idx = intent.getIntExtra(EXTRA_IDX, -1);
 					String toNum = intent.getStringExtra(EXTRA_TONUMBER);
 					String sms = intent.getStringExtra(EXTRA_SMS);
 					int succ = getResultCode();
 					if (succ == Activity.RESULT_OK) {
+					    smsListView.getChildAt(idx).setBackgroundColor(getResources().getColor(R.color.green));
+					    adapter.notifyDataSetChanged();
+					    deliveredSms ++;
 						// TODO better notification
 						//Toast.makeText(SendListActivity.this, "Delivered to " + toNum + " OK!", Toast.LENGTH_SHORT).show();
-						saveToDatabase(toNum, sms);
+						updateDataBase(toNum, sms, SEDNSUCCESSED);
 						notifySuccessfulDelivery("Delivered to " + toNum + " OK!", sms);
 					} else {
 						// TODO
 					}
 				}
 			};
+			if (smsIndexReceiver == null)
+			    smsIndexReceiver = new BroadcastReceiver() {
+	                @Override
+	                public void onReceive(Context context, Intent intent) {
+	                    
+	                    int idx = intent.getIntExtra(INDEX_KEY, -1);
+	                    smsListView.getChildAt(idx).setBackgroundColor(getResources().getColor(R.color.blue));
+	                    adapter.notifyDataSetChanged();
+	                }
+	            };
 	}
 
 	protected void registerReceivers() {
 		this.registerReceiver(smsSentReceiver, new IntentFilter(SENT_ACTION));
 		this.registerReceiver(smsDeliveredReceiver, new IntentFilter(DELIVERED_ACTION));
+		this.registerReceiver(smsIndexReceiver, new IntentFilter(SMS_INDEX_ACTION));
 	}
 	
 	protected void unregisterReceivers() {
 		this.unregisterReceiver(smsSentReceiver);
 		this.unregisterReceiver(smsDeliveredReceiver);
+		this.unregisterReceiver(smsIndexReceiver);
 	}
 	
     public void notifySuccessfulDelivery(String title, String text) {
+        
         String ns = Context.NOTIFICATION_SERVICE;
         NotificationManager mNotificationManager = (NotificationManager) getSystemService(ns);
         
         int icon = R.drawable.ic_launcher;
         CharSequence tickerText = "HappyNewYear";
         long when = System.currentTimeMillis();
-        Notification notification = new Notification(icon, tickerText, when);
+        Notification notification = new Notification(icon,tickerText,when);
         
-        Context context = getApplicationContext();
-        CharSequence contentTitle = title;
-        CharSequence contentText = text;
+        
+        if(maxSms > deliveredSms)
+        {
+            notification.flags = Notification.FLAG_ONGOING_EVENT;
+        }
+        else if(maxSms == deliveredSms)
+        {
+            
+            notification.flags = Notification.FLAG_AUTO_CANCEL;
+            
+        }
+        
+        RemoteViews contentView = new RemoteViews(this.getPackageName(), R.layout.custom_notification);
+        contentView.setTextViewText(R.id.rate,  deliveredSms+ "/" + maxSms);  
+        contentView.setProgressBar(R.id.progress, maxSms, deliveredSms, false); 
+        notification.contentView = contentView;
+        
+//        Context context = getApplicationContext();
+//        CharSequence contentTitle = title;
+//        CharSequence contentText = text;
+        
         Intent notificationIntent = new Intent(this, SendListActivity.class); //if click, then open SendListActivity
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, notificationIntent, 0);
-
-        notification.setLatestEventInfo(context, contentTitle, contentText, contentIntent);
-
+        notification.contentIntent = contentIntent;
+        
         notification.defaults |= Notification.DEFAULT_SOUND;
         notification.defaults |= Notification.DEFAULT_VIBRATE;
         notification.defaults |= Notification.DEFAULT_LIGHTS;
         
         mNotificationManager.notify(HAPPYNEWYEAR_ID, notification);
+        
     }
 
     protected void initdb() {
@@ -224,7 +278,7 @@ public class SendListActivity extends ListActivity {
             @Override
             public void onCreate(SQLiteDatabase db) {
                 db.execSQL("create table sms (_id integer primary key autoincrement, " +
-                        "to_number text not null, sms text not null)");
+                        "to_number text not null, sms text not null ,send_state text)");
             }
             @Override
             public void onUpgrade(SQLiteDatabase db, int oldVer, int newVer) {
@@ -248,16 +302,26 @@ public class SendListActivity extends ListActivity {
             rec.put(KEY_SMS, sms);
             smslist.add(rec);
         }
-        
         cur.close();
         
         adapter.notifyDataSetChanged();
     }
-    
-    protected void saveToDatabase(String toNum, String sms) {
+    protected void updateDataBase(String toNum, String sms, String sendState)
+    {
         ContentValues values = new ContentValues();
-        values.put(FIELD_TO, "Successfully delivered to " + toNum); //FIXME string constant
+        values.put(FIELD_TO, toNum); //FIXME string constant
         values.put(FIELD_SMS, sms);
+        values.put(FIELD_SEND_STATE, sendState);
+        
+        String whereClause = "to_number=?";        
+        String[] whereArgs={toNum};
+        db.update(TBL_NAME,values,whereClause,whereArgs);
+    }
+    protected void saveToDatabase(String toNum, String sms, String sendState) {
+        ContentValues values = new ContentValues();
+        values.put(FIELD_TO, toNum); //FIXME string constant
+        values.put(FIELD_SMS, sms);
+        values.put(FIELD_SEND_STATE,sendState);
         db.insert(TBL_NAME, null, values);
     }
     

@@ -13,5 +13,5 @@
     <string name="sendlist">拟发送以下客户：</string>
     <string name="no_name">没有待发送客户</string>
     <string name="send">立即发送</string>
-    <string name="template1">{TO}，{FROM}给您拜年了！</string>
+    <string name="template1">{TO}，{FROM}:希望这是最后一次测试了，我都要疯了。童鞋们，祝测试顺利！</string>
 </resources>
